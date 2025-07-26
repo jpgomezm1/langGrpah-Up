@@ -70,7 +70,7 @@ class AgentNodes:
         
         return state
     
-    # --- NUEVA FUNCIÓN AUXILIAR 1 ---
+    # --- NUEVA FUNCIÓN AUXILIAR MEJORADA 1 ---
     def _extract_with_llm(self, info_to_extract: str, last_message: str) -> Optional[str]:
         """Usa el LLM para extraer una pieza específica de información de un mensaje."""
         
@@ -89,6 +89,18 @@ Tu respuesta: "medellín"
 Ejemplo para 'duration':
 Mensaje de usuario: "lo necesito por tres semanas"
 Tu respuesta: "21"
+
+Ejemplo para 'height':
+Mensaje de usuario: "necesito llegar a 5 metros de altura"
+Tu respuesta: "5"
+
+Ejemplo para 'equipment_type':
+Mensaje de usuario: "necesito un andamio móvil"
+Tu respuesta: "andamio"
+
+Ejemplo para 'surface_type':
+Mensaje de usuario: "el piso es de concreto"
+Tu respuesta: "concreto"
 """
         messages = [
             SystemMessage(content=system_prompt),
@@ -105,7 +117,7 @@ Tu respuesta: "21"
             
         return extracted_value
 
-    # --- NUEVA FUNCIÓN AUXILIAR 2 ---
+    # --- NUEVA FUNCIÓN AUXILIAR MEJORADA 2 ---
     def _update_state_with_extraction(self, state: RentalAgentState, info_key: str, value: str):
         """Actualiza el estado anidado con la información extraída."""
         if info_key == "project_type":
@@ -120,43 +132,58 @@ Tu respuesta: "21"
                     state["project_details"].duration_days = int(days_match.group(0))
                 except (ValueError, TypeError):
                     pass # Ignorar si la conversión falla
+        elif info_key == "height":
+            try:
+                height = float(value)
+                if not state["equipment_needs"]:
+                    state["equipment_needs"] = [EquipmentNeed()]
+                state["equipment_needs"][0].height_needed = height
+            except (ValueError, TypeError):
+                pass
+        elif info_key == "equipment_type":
+            if not state["equipment_needs"]:
+                state["equipment_needs"] = [EquipmentNeed()]
+            state["equipment_needs"][0].equipment_type = value
+        elif info_key == "surface_type":
+            if not state["site_conditions"]:
+                state["site_conditions"] = SiteConditions()
+            state["site_conditions"].surface_type = value
 
-    # --- FUNCIÓN MODIFICADA ---
+    # --- NUEVA FUNCIÓN AUXILIAR 3 ---
+    def _extract_all_possible_info(self, state: RentalAgentState, message: str):
+        """Extrae toda la información posible del mensaje usando múltiples métodos."""
+        
+        # Lista de todos los campos que podemos extraer
+        fields_to_extract = ["project_type", "location", "duration", "height", "equipment_type", "surface_type"]
+        
+        # 1. Extracción con LLM para cada campo
+        for field in fields_to_extract:
+            extracted_value = self._extract_with_llm(field, message)
+            if extracted_value:
+                self._update_state_with_extraction(state, field, extracted_value)
+        
+        # 2. Ejecutar también la extracción por regex para datos estructurados
+        self._extract_information_from_message(state, message)
+
+    # --- FUNCIÓN MODIFICADA MEJORADA ---
     def information_gatherer(self, state: RentalAgentState) -> RentalAgentState:
         """Nodo para recopilar información faltante de forma inteligente."""
         
         last_message = state["last_message"]
         
-        # Identificar qué se preguntó en el turno anterior para saber qué buscar
-        last_question = next((msg.content for msg in reversed(state["conversation_history"]) if msg.role == "assistant"), None)
+        # NUEVA LÓGICA: Extraer toda la información posible del mensaje
+        self._extract_all_possible_info(state, last_message)
         
-        info_we_asked_for = None
-        if last_question:
-            if "¿qué tipo de trabajo vas a realizar?" in last_question.lower():
-                info_we_asked_for = "project_type"
-            elif "¿en qué ciudad o zona será el proyecto?" in last_question.lower():
-                info_we_asked_for = "location"
-            elif "¿por cuántos días aproximadamente necesitas el equipo?" in last_question.lower():
-                info_we_asked_for = "duration"
-
-        # Si sabemos qué preguntamos, intentamos extraer esa información específica
-        if info_we_asked_for:
-            extracted_value = self._extract_with_llm(info_we_asked_for, last_message)
-            if extracted_value:
-                self._update_state_with_extraction(state, info_we_asked_for, extracted_value)
-        
-        # Ejecutar también la extracción por regex para datos estructurados (altura, email, etc.)
-        self._extract_information_from_message(state, last_message)
-        
-        # Ahora, con el estado potencialmente actualizado, volvemos a verificar qué falta
+        # Ahora verificar qué información aún falta
         missing_info = self._identify_missing_information(state)
         
         if missing_info:
+            # Si aún falta información, hacer la siguiente pregunta
             question = self._generate_contextual_question(state, missing_info[0])
             response_message = question
             next_action = "information_gatherer"
         else:
-            # Si ya no falta nada, avanzamos a la siguiente etapa
+            # Si ya no falta nada, avanzar a la siguiente etapa
             current_stage = state["conversation_stage"]
             if current_stage == "gathering_basic_info":
                 response_message = "¡Perfecto! Ahora necesito algunos detalles técnicos para recomendarte el mejor equipo."
@@ -166,7 +193,7 @@ Tu respuesta: "21"
                 response_message = "¡Excelente! Con esta información puedo recomendarte los equipos más adecuados."
                 state["conversation_stage"] = "equipment_recommendation"
                 next_action = "equipment_advisor"
-        
+    
         self._add_message_to_history(state, "assistant", response_message)
         state["next_action"] = next_action
         state["updated_at"] = datetime.now()
@@ -280,7 +307,7 @@ Mientras tanto, ¿hay algo más en lo que pueda ayudarte?"""
     # Métodos auxiliares
     
     def _extract_information_from_message(self, state: RentalAgentState, message: str):
-        """Extraer información estructurada del mensaje"""
+        """Extraer información estructurada del mensaje usando regex"""
         
         # Extraer altura
         height_match = re.search(EXTRACTION_PATTERNS["height"], message, re.IGNORECASE)
@@ -333,7 +360,7 @@ Mientras tanto, ¿hay algo más en lo que pueda ayudarte?"""
                 missing.append("height")
             if not state["equipment_needs"] or not state["equipment_needs"][0].equipment_type:
                 missing.append("equipment_type")
-            if not state["site_conditions"].surface_type:
+            if not state["site_conditions"] or not state["site_conditions"].surface_type:
                 missing.append("surface_type")
         
         return missing

@@ -37,7 +37,8 @@ class RentalAgentGraph:
                 "equipment_advisor": "equipment_advisor",
                 "quote_calculator": "quote_calculator",
                 "conversation_manager": "conversation_manager",
-                "escalation_handler": "escalation_handler"
+                "escalation_handler": "escalation_handler",
+                "end": END
             }
         )
         
@@ -48,6 +49,8 @@ class RentalAgentGraph:
                 "information_gatherer": "information_gatherer",
                 "equipment_advisor": "equipment_advisor",
                 "conversation_manager": "conversation_manager",
+                # RUTA DE ESCAPE AÑADIDA
+                "escalation_handler": "escalation_handler",
                 "end": END
             }
         )
@@ -68,6 +71,8 @@ class RentalAgentGraph:
             self._route_from_quote_calculator,
             {
                 "conversation_manager": "conversation_manager",
+                # RUTA DE ESCAPE AÑADIDA
+                "escalation_handler": "escalation_handler",
                 "end": END
             }
         )
@@ -88,6 +93,7 @@ class RentalAgentGraph:
             "escalation_handler",
             self._route_from_escalation_handler,
             {
+                "conversation_manager": "conversation_manager",
                 "end": END
             }
         )
@@ -97,7 +103,13 @@ class RentalAgentGraph:
     
     def _route_from_router(self, state: RentalAgentState) -> str:
         """Rutear desde message_router"""
-        return state.get("next_action", "conversation_manager")
+        next_action = state.get("next_action", "conversation_manager")
+        
+        # Verificar si necesita escalación desde el router
+        if state.get("needs_human_intervention", False):
+            return "escalation_handler"
+        
+        return next_action
     
     def _route_from_information_gatherer(self, state: RentalAgentState) -> str:
         """Rutear desde information_gatherer"""
@@ -106,6 +118,10 @@ class RentalAgentGraph:
         # Si necesita intervención humana, escalar
         if state.get("needs_human_intervention", False):
             return "escalation_handler"
+        
+        # Verificar si la conversación ha terminado
+        if state.get("conversation_stage") == "completed":
+            return "end"
         
         return next_action
     
@@ -117,11 +133,25 @@ class RentalAgentGraph:
         if state.get("needs_human_intervention", False):
             return "escalation_handler"
         
+        # Verificar si la conversación ha terminado
+        if state.get("conversation_stage") == "completed":
+            return "end"
+        
         return next_action
     
     def _route_from_quote_calculator(self, state: RentalAgentState) -> str:
         """Rutear desde quote_calculator"""
-        return state.get("next_action", "conversation_manager")
+        next_action = state.get("next_action", "conversation_manager")
+        
+        # Si necesita intervención humana, escalar
+        if state.get("needs_human_intervention", False):
+            return "escalation_handler"
+        
+        # Verificar si la conversación ha terminado
+        if state.get("conversation_stage") == "completed":
+            return "end"
+        
+        return next_action
     
     def _route_from_conversation_manager(self, state: RentalAgentState) -> str:
         """Rutear desde conversation_manager"""
@@ -140,36 +170,86 @@ class RentalAgentGraph:
     def _route_from_escalation_handler(self, state: RentalAgentState) -> str:
         """
         Ruta desde el escalation_handler.
-        La escalación es un estado terminal para el turno del agente.
+        Después de escalar, puede continuar conversando o terminar.
         """
-        # Siempre debe terminar el turno después de escalar.
+        next_action = state.get("next_action", "end")
+        
+        # Verificar si la conversación ha terminado
+        if state.get("conversation_stage") == "completed" or state.get("conversation_stage") == "escalated":
+            return "end"
+        
+        # Si aún hay conversación después de la escalación, continuar
+        if next_action == "conversation_manager":
+            return "conversation_manager"
+        
+        # Por defecto, terminar después de escalar
         return "end"
     
     def process_message(self, state: RentalAgentState) -> RentalAgentState:
         """Procesar mensaje a través del grafo"""
         try:
+            # Validar estado antes de procesar
+            if not self._validate_state(state):
+                state["needs_human_intervention"] = True
+                state["escalation_reason"] = "Invalid state structure"
+                return state
+            
             # Ejecutar el grafo
             result = self.graph.invoke(state)
             return result
         except Exception as e:
             print(f"Error processing message: {e}")
-            # Estado de fallback
+            # Estado de fallback más robusto
             state["needs_human_intervention"] = True
             state["escalation_reason"] = f"Technical error: {str(e)}"
+            state["conversation_stage"] = "escalated"
+            state["next_action"] = "end"
             return state
     
     async def aprocess_message(self, state: RentalAgentState) -> RentalAgentState:
         """Procesar mensaje de forma asíncrona"""
         try:
+            # Validar estado antes de procesar
+            if not self._validate_state(state):
+                state["needs_human_intervention"] = True
+                state["escalation_reason"] = "Invalid state structure"
+                return state
+            
             # Ejecutar el grafo de forma asíncrona
             result = await self.graph.ainvoke(state)
             return result
         except Exception as e:
             print(f"Error processing message: {e}")
-            # Estado de fallback
+            # Estado de fallback más robusto
             state["needs_human_intervention"] = True
             state["escalation_reason"] = f"Technical error: {str(e)}"
+            state["conversation_stage"] = "escalated"
+            state["next_action"] = "end"
             return state
+    
+    def _validate_state(self, state: RentalAgentState) -> bool:
+        """Validar que el estado tenga la estructura mínima requerida"""
+        try:
+            # Verificar campos críticos
+            required_fields = ["conversation_stage", "conversation_history", "last_message"]
+            for field in required_fields:
+                if field not in state:
+                    print(f"Missing required field: {field}")
+                    return False
+            
+            # Verificar que los objetos anidados existan
+            if "project_details" not in state or state["project_details"] is None:
+                print("Missing project_details")
+                return False
+            
+            if "client_info" not in state or state["client_info"] is None:
+                print("Missing client_info")
+                return False
+            
+            return True
+        except Exception as e:
+            print(f"State validation error: {e}")
+            return False
     
     def get_graph_visualization(self) -> str:
         """Obtener representación visual del grafo (para debugging)"""
