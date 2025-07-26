@@ -181,14 +181,19 @@ Tu respuesta: "concreto"
             # Si aún falta información, hacer la siguiente pregunta
             question = self._generate_contextual_question(state, missing_info[0])
             response_message = question
-            next_action = "information_gatherer"
+            # 👇 --- CAMBIO SUTIL PERO IMPORTANTE ---
+            # Usamos el string 'end' para que el enrutador lo maneje explícitamente.
+            next_action = "end"
         else:
             # Si ya no falta nada, avanzar a la siguiente etapa
             current_stage = state["conversation_stage"]
             if current_stage == "gathering_basic_info":
                 response_message = "¡Perfecto! Ahora necesito algunos detalles técnicos para recomendarte el mejor equipo."
                 state["conversation_stage"] = "gathering_technical_info"
-                next_action = "information_gatherer" # Vuelve a este mismo nodo para empezar a pedir la info técnica
+                # Hacemos la primera pregunta técnica y terminamos el turno.
+                question = self._generate_contextual_question(state, "height")
+                response_message += "\n\n" + question
+                next_action = "end"
             else: # Asumimos que la etapa es gathering_technical_info
                 response_message = "¡Excelente! Con esta información puedo recomendarte los equipos más adecuados."
                 state["conversation_stage"] = "equipment_recommendation"

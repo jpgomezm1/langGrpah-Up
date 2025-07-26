@@ -113,29 +113,39 @@ class RentalAgentGraph:
     
     def _route_from_information_gatherer(self, state: RentalAgentState) -> str:
         """Rutear desde information_gatherer"""
-        next_action = state.get("next_action", "end")
+        next_action = state.get("next_action", "end")  # Por defecto, terminar si no hay acción.
         
-        # Si necesita intervención humana, escalar
+        # 👇 --- NUEVA LÓGICA DE ENRUTAMIENTO ---
+        # Si la acción es 'end', terminamos el turno actual.
+        if next_action == "end":
+            return END
+            
+        # Si necesita intervención humana, escalar.
         if state.get("needs_human_intervention", False):
             return "escalation_handler"
-        
-        # Verificar si la conversación ha terminado
+            
+        # Si la conversación está completada, terminar.
         if state.get("conversation_stage") == "completed":
-            return "end"
-        
+            return END
+            
+        # De lo contrario, ir al nodo que 'next_action' especifica.
         return next_action
     
     def _route_from_equipment_advisor(self, state: RentalAgentState) -> str:
         """Rutear desde equipment_advisor"""
         next_action = state.get("next_action", "end")
         
+        # Si la acción es 'end', terminamos el turno actual.
+        if next_action == "end":
+            return END
+        
         # Si necesita intervención humana, escalar
         if state.get("needs_human_intervention", False):
             return "escalation_handler"
         
         # Verificar si la conversación ha terminado
         if state.get("conversation_stage") == "completed":
-            return "end"
+            return END
         
         return next_action
     
@@ -143,13 +153,17 @@ class RentalAgentGraph:
         """Rutear desde quote_calculator"""
         next_action = state.get("next_action", "conversation_manager")
         
+        # Si la acción es 'end', terminamos el turno actual.
+        if next_action == "end":
+            return END
+        
         # Si necesita intervención humana, escalar
         if state.get("needs_human_intervention", False):
             return "escalation_handler"
         
         # Verificar si la conversación ha terminado
         if state.get("conversation_stage") == "completed":
-            return "end"
+            return END
         
         return next_action
     
@@ -157,13 +171,17 @@ class RentalAgentGraph:
         """Rutear desde conversation_manager"""
         next_action = state.get("next_action", "end")
         
+        # Si la acción es 'end', terminamos el turno actual.
+        if next_action == "end":
+            return END
+        
         # Verificar si necesita escalación
         if state.get("needs_human_intervention", False):
             return "escalation_handler"
         
         # Verificar si la conversación ha terminado
         if state.get("conversation_stage") == "completed":
-            return "end"
+            return END
         
         return next_action
     
@@ -174,16 +192,20 @@ class RentalAgentGraph:
         """
         next_action = state.get("next_action", "end")
         
+        # Si la acción es 'end', terminamos el turno actual.
+        if next_action == "end":
+            return END
+        
         # Verificar si la conversación ha terminado
         if state.get("conversation_stage") == "completed" or state.get("conversation_stage") == "escalated":
-            return "end"
+            return END
         
         # Si aún hay conversación después de la escalación, continuar
         if next_action == "conversation_manager":
             return "conversation_manager"
         
         # Por defecto, terminar después de escalar
-        return "end"
+        return END
     
     def process_message(self, state: RentalAgentState) -> RentalAgentState:
         """Procesar mensaje a través del grafo"""

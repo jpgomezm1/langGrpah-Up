@@ -1,0 +1,10 @@
+
+{
+    "minimum_rental_days": 1,
+    "maximum_rental_days": 365,
+    "delivery_radius_km": 50,
+    "weekend_surcharge": 1.2,
+    "holiday_surcharge": 1.5,
+    "damage_deposit_percentage": 0.2,
+    "cancellation_hours": 24
+}

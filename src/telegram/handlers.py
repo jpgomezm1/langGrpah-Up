@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes
 from telegram.error import TelegramError
 from typing import Dict, Any
 import logging
+from datetime import datetime
 
 from src.agent.graph import agent_graph
 from src.services.conversation_service import ConversationService
@@ -250,47 +251,52 @@ class TelegramHandlers:
         rate_limiter.increment_rate_limit(str(user.id))
         
         try:
-            # Crear o recuperar conversación
+            # 1. Obtener el estado actual de la conversación
             state = self.conversation_service.create_or_get_conversation(
                 telegram_user_id=str(user.id),
                 chat_id=chat_id,
                 username=user.username
             )
             
-            # Actualizar último mensaje
+            # 2. Actualizar el estado con el último mensaje del usuario
             state["last_message"] = message_text
-            
-            # Procesar mensaje a través del agente
+            # 👇 --- LÓGICA SIMPLIFICADA ---
+            # Agregar el mensaje del usuario al historial del estado ANTES de llamar al agente
+            state["conversation_history"].append({
+                "role": "user",
+                "content": message_text,
+                "timestamp": datetime.now(),
+                "message_type": "text"
+            })
+
+            # 3. Procesar el mensaje a través del agente
+            # El agente ahora agregará su propia respuesta al historial
             updated_state = await agent_graph.aprocess_message(state)
             
-            # Obtener respuesta del agente
+            # 4. Obtener la última respuesta del asistente para enviarla
+            response_text = "Disculpa, no entendí. ¿Podrías repetirlo?" # Mensaje por defecto
             if updated_state["conversation_history"]:
-                last_message = updated_state["conversation_history"][-1]
-                if last_message["role"] == "assistant":
-                    response_text = last_message["content"]
-                else:
-                    response_text = "¿En qué más puedo ayudarte?"
-            else:
-                response_text = "¿Podrías repetir tu consulta?"
-            
-            # Guardar estado actualizado
+                last_agent_message = next((msg for msg in reversed(updated_state["conversation_history"]) if msg["role"] == "assistant"), None)
+                if last_agent_message:
+                    response_text = last_agent_message["content"]
+
+            # 5. Enviar la respuesta al usuario
+            await update.message.reply_text(
+                response_text,
+                parse_mode='Markdown' if '*' in response_text or '_' in response_text else None
+            )
+
+            # 6. Guardar el estado final y persistir todo en la BD
+            # El `save_conversation_state` debería ser el único responsable de guardar todo
             self.conversation_service.save_conversation_state(updated_state)
             
-            # Agregar mensaje del usuario a la BD
+            # Guardamos los mensajes en la BD a partir del historial del estado final
             self.conversation_service.add_message_to_conversation(
                 conversation_id=updated_state["session_id"],
                 role="user",
                 content=message_text,
                 telegram_message_id=str(update.message.message_id)
             )
-            
-            # Enviar respuesta
-            await update.message.reply_text(
-                response_text,
-                parse_mode='Markdown' if '*' in response_text or '_' in response_text else None
-            )
-            
-            # Agregar respuesta del asistente a la BD
             self.conversation_service.add_message_to_conversation(
                 conversation_id=updated_state["session_id"],
                 role="assistant",
