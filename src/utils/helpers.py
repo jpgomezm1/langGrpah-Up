@@ -26,7 +26,8 @@ def setup_logging():
     
     # Configurar handler para archivo
     file_handler = logging.FileHandler(
-        log_dir / f"rental_bot_{datetime.now().strftime('%Y%m%d')}.log"
+        log_dir / f"rental_bot_{datetime.now().strftime('%Y%m%d')}.log",
+        encoding='utf-8'
     )
     file_handler.setFormatter(log_format)
     file_handler.setLevel(logging.INFO)

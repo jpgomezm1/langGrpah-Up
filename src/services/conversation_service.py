@@ -232,31 +232,38 @@ class ConversationService:
         return serialized
     
     def _deserialize_state(self, state_data: Dict) -> RentalAgentState:
-        """Deserializar estado desde almacenamiento"""
+        """Deserializar el estado desde el almacenamiento."""
         
-        # Reconstruir objetos desde diccionarios
-        deserialized = {}
+        deserialized = state_data.copy()
+
+        # Convertir fechas de string ISO a datetime
+        for key in ['created_at', 'updated_at']:
+            if key in deserialized and isinstance(deserialized[key], str):
+                deserialized[key] = datetime.fromisoformat(deserialized[key])
+
+        # Reconstruir dataclasses anidados
+        if 'client_info' in deserialized and isinstance(deserialized['client_info'], dict):
+            deserialized['client_info'] = ClientInfo(**deserialized['client_info'])
+        if 'project_details' in deserialized and isinstance(deserialized['project_details'], dict):
+            deserialized['project_details'] = ProjectDetails(**deserialized['project_details'])
+        if 'site_conditions' in deserialized and isinstance(deserialized['site_conditions'], dict):
+            deserialized['site_conditions'] = SiteConditions(**deserialized['site_conditions'])
+        if 'equipment_needs' in deserialized and isinstance(deserialized['equipment_needs'], list):
+            deserialized['equipment_needs'] = [EquipmentNeed(**item) for item in deserialized['equipment_needs']]
         
-        for key, value in state_data.items():
-            if key in ['created_at', 'updated_at'] and isinstance(value, str):
-                # Convertir fechas de string ISO a datetime
-                deserialized[key] = datetime.fromisoformat(value)
-            elif key == 'client_info' and isinstance(value, dict):
-                deserialized[key] = ClientInfo(**value)
-            elif key == 'project_details' and isinstance(value, dict):
-                deserialized[key] = ProjectDetails(**value)
-            elif key == 'site_conditions' and isinstance(value, dict):
-                deserialized[key] = SiteConditions(**value)
-            elif key == 'equipment_needs' and isinstance(value, list):
-                deserialized[key] = [EquipmentNeed(**item) for item in value]
-            elif key == 'conversation_history' and isinstance(value, list):
-                deserialized[key] = [
-                    ConversationMessage(**item) for item in value
-                ]
-            else:
-                deserialized[key] = value
-        
-        return RentalAgentState(**deserialized)
+        # Convertir timestamps en el historial
+        if 'conversation_history' in deserialized and isinstance(deserialized['conversation_history'], list):
+            history = []
+            for item in deserialized['conversation_history']:
+                if isinstance(item, dict) and 'timestamp' in item and isinstance(item['timestamp'], str):
+                    try:
+                        item['timestamp'] = datetime.fromisoformat(item['timestamp'])
+                    except ValueError:
+                        item['timestamp'] = datetime.now()
+                history.append(item)
+            deserialized['conversation_history'] = history
+                
+        return deserialized
     
     def _update_conversation_in_db(self, state: RentalAgentState):
         """Actualizar información de conversación en BD"""

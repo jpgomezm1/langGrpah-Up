@@ -1,4 +1,4 @@
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import re
 from langchain_openai import ChatOpenAI
@@ -17,38 +17,43 @@ class AgentNodes:
     def __init__(self):
         self.llm = ChatOpenAI(
             model=settings.openai_model,
-            temperature=0.3,
+            temperature=0.1,  # Reducimos la temperatura para extracciones precisas
             api_key=settings.openai_api_key
         )
         self.equipment_service = EquipmentService()
         self.pricing_service = PricingService()
     
     def message_router(self, state: RentalAgentState) -> RentalAgentState:
-        """Nodo para clasificar y rutear mensajes entrantes"""
+        """Nodo para clasificar y rutear mensajes entrantes."""
         
         last_message = state["last_message"].lower()
         current_stage = state["conversation_stage"]
         
-        # Palabras clave para clasificación
-        greeting_keywords = ["hola", "buenos días", "buenas tardes", "buenas", "hey", "hi"]
-        quote_keywords = ["cotización", "precio", "costo", "cuanto cuesta", "presupuesto"]
-        technical_keywords = ["altura", "andamio", "plataforma", "escalera", "metros", "kg"]
+        quote_keywords = ["cotización", "cotizar", "precio", "costo", "alquiler", "rentar", "interesado"]
+        technical_keywords = ["altura", "andamio", "plataforma", "escalera", "metros", "kg", "especificaciones"]
         contact_keywords = ["contacto", "teléfono", "email", "dirección"]
         
-        # Determinar el próximo nodo basado en el contenido del mensaje
-        if any(keyword in last_message for keyword in greeting_keywords) and current_stage == "greeting":
-            next_action = "conversation_manager"
-            conversation_stage = "gathering_basic_info"
-        elif any(keyword in last_message for keyword in quote_keywords):
+        next_action = None
+        conversation_stage = current_stage
+
+        # 1. Manejar intenciones explícitas primero
+        if any(keyword in last_message for keyword in quote_keywords):
             next_action = "information_gatherer"
-            conversation_stage = "gathering_technical_info"
+            conversation_stage = "gathering_basic_info"
         elif any(keyword in last_message for keyword in technical_keywords):
-            next_action = "equipment_advisor" 
-            conversation_stage = "equipment_recommendation"
+            next_action = "information_gatherer"  # Recopilar contexto antes de recomendar
+            conversation_stage = "gathering_technical_info"
         elif any(keyword in last_message for keyword in contact_keywords):
             next_action = "conversation_manager"
-        else:
-            # Continuar con el flujo normal basado en la etapa actual
+        
+        # 2. Manejar el flujo de la conversación si no se encontró una intención específica
+        elif current_stage == "greeting":
+            # Este es el primer mensaje real después de la bienvenida. Iniciar la recopilación de información.
+            next_action = "information_gatherer"
+            conversation_stage = "gathering_basic_info"
+        
+        # 3. Si no se determina una ruta, usar el mapeo de etapas como fallback
+        if not next_action:
             stage_mapping = {
                 "gathering_basic_info": "information_gatherer",
                 "gathering_technical_info": "information_gatherer", 
@@ -57,48 +62,113 @@ class AgentNodes:
                 "quote_review": "conversation_manager"
             }
             next_action = stage_mapping.get(current_stage, "conversation_manager")
-            conversation_stage = current_stage
-        
-        # Actualizar estado
+            
+        # Actualizar el estado
         state["next_action"] = next_action
         state["conversation_stage"] = conversation_stage
         state["updated_at"] = datetime.now()
         
         return state
     
-    def information_gatherer(self, state: RentalAgentState) -> RentalAgentState:
-        """Nodo para recopilar información faltante"""
+    # --- NUEVA FUNCIÓN AUXILIAR 1 ---
+    def _extract_with_llm(self, info_to_extract: str, last_message: str) -> Optional[str]:
+        """Usa el LLM para extraer una pieza específica de información de un mensaje."""
         
-        current_stage = state["conversation_stage"]
+        system_prompt = f"""
+Eres un experto en extracción de información. Tu tarea es analizar el mensaje del usuario y extraer el valor para el siguiente campo: '{info_to_extract}'.
+Responde únicamente con el valor extraído. Si la información no está presente, responde exactamente con la palabra 'None'.
+
+Ejemplo para 'project_type':
+Mensaje de usuario: "es para mantenimiento de una fachada"
+Tu respuesta: "mantenimiento"
+
+Ejemplo para 'location':
+Mensaje de usuario: "el trabajo es en medellín"
+Tu respuesta: "medellín"
+
+Ejemplo para 'duration':
+Mensaje de usuario: "lo necesito por tres semanas"
+Tu respuesta: "21"
+"""
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=last_message)
+        ]
+        
+        # Usamos .invoke() que es la forma recomendada
+        response = self.llm.invoke(messages)
+        extracted_value = response.content.strip()
+
+        # Comprobación robusta de una respuesta nula
+        if extracted_value.lower() == "none" or len(extracted_value) == 0:
+            return None
+            
+        return extracted_value
+
+    # --- NUEVA FUNCIÓN AUXILIAR 2 ---
+    def _update_state_with_extraction(self, state: RentalAgentState, info_key: str, value: str):
+        """Actualiza el estado anidado con la información extraída."""
+        if info_key == "project_type":
+            state["project_details"].project_type = value
+        elif info_key == "location":
+            state["project_details"].location = value
+        elif info_key == "duration":
+            # Intentar extraer solo el número de la respuesta
+            days_match = re.search(r'\d+', value)
+            if days_match:
+                try:
+                    state["project_details"].duration_days = int(days_match.group(0))
+                except (ValueError, TypeError):
+                    pass # Ignorar si la conversión falla
+
+    # --- FUNCIÓN MODIFICADA ---
+    def information_gatherer(self, state: RentalAgentState) -> RentalAgentState:
+        """Nodo para recopilar información faltante de forma inteligente."""
+        
         last_message = state["last_message"]
         
-        # Extraer información del último mensaje
+        # Identificar qué se preguntó en el turno anterior para saber qué buscar
+        last_question = next((msg.content for msg in reversed(state["conversation_history"]) if msg.role == "assistant"), None)
+        
+        info_we_asked_for = None
+        if last_question:
+            if "¿qué tipo de trabajo vas a realizar?" in last_question.lower():
+                info_we_asked_for = "project_type"
+            elif "¿en qué ciudad o zona será el proyecto?" in last_question.lower():
+                info_we_asked_for = "location"
+            elif "¿por cuántos días aproximadamente necesitas el equipo?" in last_question.lower():
+                info_we_asked_for = "duration"
+
+        # Si sabemos qué preguntamos, intentamos extraer esa información específica
+        if info_we_asked_for:
+            extracted_value = self._extract_with_llm(info_we_asked_for, last_message)
+            if extracted_value:
+                self._update_state_with_extraction(state, info_we_asked_for, extracted_value)
+        
+        # Ejecutar también la extracción por regex para datos estructurados (altura, email, etc.)
         self._extract_information_from_message(state, last_message)
         
-        # Determinar qué información falta
+        # Ahora, con el estado potencialmente actualizado, volvemos a verificar qué falta
         missing_info = self._identify_missing_information(state)
         
         if missing_info:
-            # Generar pregunta contextual
             question = self._generate_contextual_question(state, missing_info[0])
             response_message = question
             next_action = "information_gatherer"
         else:
-            # Toda la información recopilada, pasar al siguiente paso
+            # Si ya no falta nada, avanzamos a la siguiente etapa
+            current_stage = state["conversation_stage"]
             if current_stage == "gathering_basic_info":
-                response_message = "Perfecto! Ahora necesito algunos detalles técnicos para recomendarte el mejor equipo."
+                response_message = "¡Perfecto! Ahora necesito algunos detalles técnicos para recomendarte el mejor equipo."
                 state["conversation_stage"] = "gathering_technical_info"
-                next_action = "information_gatherer"
-            else:
-                response_message = "Excelente! Con esta información puedo recomendarte los equipos más adecuados."
+                next_action = "information_gatherer" # Vuelve a este mismo nodo para empezar a pedir la info técnica
+            else: # Asumimos que la etapa es gathering_technical_info
+                response_message = "¡Excelente! Con esta información puedo recomendarte los equipos más adecuados."
                 state["conversation_stage"] = "equipment_recommendation"
                 next_action = "equipment_advisor"
         
-        # Agregar mensaje a la conversación
         self._add_message_to_history(state, "assistant", response_message)
-        
         state["next_action"] = next_action
-        state["missing_information"] = missing_info
         state["updated_at"] = datetime.now()
         
         return state

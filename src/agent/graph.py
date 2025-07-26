@@ -88,7 +88,6 @@ class RentalAgentGraph:
             "escalation_handler",
             self._route_from_escalation_handler,
             {
-                "conversation_manager": "conversation_manager",
                 "end": END
             }
         )
@@ -139,8 +138,12 @@ class RentalAgentGraph:
         return next_action
     
     def _route_from_escalation_handler(self, state: RentalAgentState) -> str:
-        """Rutear desde escalation_handler"""
-        return state.get("next_action", "end")
+        """
+        Ruta desde el escalation_handler.
+        La escalación es un estado terminal para el turno del agente.
+        """
+        # Siempre debe terminar el turno después de escalar.
+        return "end"
     
     def process_message(self, state: RentalAgentState) -> RentalAgentState:
         """Procesar mensaje a través del grafo"""
