@@ -1,0 +1,50 @@
+# LangChain y LangGraph
+langchain==0.2.16
+langgraph==0.2.28
+langchain-openai==0.1.25
+langchain-community==0.2.16
+
+# Telegram Bot
+python-telegram-bot==21.5
+python-telegram-bot[webhooks]
+
+# Base de datos
+sqlalchemy==2.0.32
+psycopg2-binary==2.9.9
+alembic==1.13.2
+
+# Cache y estado
+redis==5.0.8
+python-redis-lock==4.0.0
+
+# API y Web
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# Utilidades
+python-dotenv==1.0.1
+loguru==0.7.2
+httpx==0.27.2
+aiofiles==24.1.0
+
+# Validación y serialización
+marshmallow==3.22.0
+jsonschema==4.23.0
+
+# Desarrollo y testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-mock==3.14.0
+black==24.8.0
+flake8==7.1.1
+mypy==1.11.2
+
+# Monitoreo y métricas
+prometheus-client==0.20.0
+sentry-sdk==2.14.0
+
+# Procesamiento de texto
+unidecode==1.3.8
+python-dateutil==2.9.0
